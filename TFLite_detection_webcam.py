@@ -14,8 +14,11 @@
 # I added my own method of drawing boxes and labels using OpenCV.
 
 # Import packages
+import math
 import os
 import argparse
+from itertools import combinations
+
 import cv2
 import numpy as np
 import sys
@@ -158,6 +161,11 @@ freq = cv2.getTickFrequency()
 videostream = VideoStream(resolution=(imW,imH),framerate=30).start()
 time.sleep(1)
 
+def is_close(p1, p2):
+    """returns Euclidean Distance between two 2d points"""
+    dst = math.sqrt(p1 ** 2 + p2 ** 2)
+    return dst
+
 #for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=True):
 while True:
 
@@ -187,6 +195,9 @@ while True:
     scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence of detected objects
     #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
 
+    centroid_dict = dict()  # Function creates a dictionary and calls it centroid_dict
+    objectId = 0  # We initialize a variable called ObjectId and set it to 0
+
     # Loop over all detections and draw detection box if confidence is above minimum threshold
     for i in range(len(scores)):
         if ((scores[i] > min_conf_threshold) and (scores[i] <= 1.0)):
@@ -197,16 +208,58 @@ while True:
             xmin = int(max(1,(boxes[i][1] * imW)))
             ymax = int(min(imH,(boxes[i][2] * imH)))
             xmax = int(min(imW,(boxes[i][3] * imW)))
-            
-            cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), (10, 255, 0), 2)
+            object_name = labels[int(classes[i])]  # Look up object name from "labels" array using class index
+            print("object name", object_name)
+            if object_name == 'person':
+                # calculate middle points x,y
+                x = int(round((xmin + xmax) / 2))
+                y = int(round((ymin + ymax) / 2))
 
+                centroid_dict[objectId] = (x, y, xmin, ymin, xmax,
+                                           ymax)  # Create dictionary of tuple with 'objectId' as the index center points and bbox
+                objectId += 1  # Increment the index for each detection
+                #print('centroid', centroid_dict)
+                print("centroid", centroid_dict[i])
+                print("Score", scores[i])
+
+    red_zone_list = []  # List containing which Object id is in under threshold distance condition.
+    red_line_list = []
+    for (id1, p1), (id2, p2) in combinations(centroid_dict.items(), 2):  # Get all the combinations of close detections, #List of multiple items - id1 1, points 2, 1,3
+        dx, dy = p1[0] - p2[0], p1[1] - p2[1]  # Check the difference between centroid x: 0, y :1
+        distance = is_close(dx, dy)
+        print('distance', distance)  # Calculates the Euclidean distance
+        if distance < 500:  # Set our social distance threshold - If they meet this condition then..
+            print('DISTANCE TOO CLOSE')
+            if id1 not in red_zone_list:
+                red_zone_list.append(id1)  # Add Id to a list
+                red_line_list.append(p1[0:2])  # Add points to the list
+            if id2 not in red_zone_list:
+                red_zone_list.append(id2)  # Same for the second id
+                red_line_list.append(p2[0:2])
+
+    for idx, box in centroid_dict.items():  # dict (1(key):red(value), 2 blue)  idx - key  box - value
+        if idx in red_zone_list:  # if id is in red zone list
+            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (255, 0, 0), 2)  # Create Red bounding boxes  #starting point, ending point size of 2
             # Draw label
-            object_name = labels[int(classes[i])] # Look up object name from "labels" array using class index
-            label = '%s: %d%%' % (object_name, int(scores[i]*100)) # Example: 'person: 72%'
-            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
-            label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-            cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
-            cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
+            label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
+            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)  # Get font size
+            label_ymin = max(box[3], labelSize[1] + 10)  # Make sure not to draw label too close to top of window
+            cv2.rectangle(frame, (box[2], label_ymin - labelSize[1] - 10),
+                          (box[2] + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255),
+                          cv2.FILLED)  # Draw white box to put label text in
+            cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+                        2)  # Draw label text
+        else:
+            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (0, 255, 0), 2)  # Create Green bounding boxes
+            # Draw label
+            label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
+            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)  # Get font size
+            label_ymin = max(box[3], labelSize[1] + 10)  # Make sure not to draw label too close to top of window
+            cv2.rectangle(frame, (box[2], label_ymin - labelSize[1] - 10),
+                          (box[2] + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255),
+                          cv2.FILLED)  # Draw white box to put label text in
+            cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+                        2)  # Draw label text
 
     # Draw framerate in corner of frame
     cv2.putText(frame,'FPS: {0:.2f}'.format(frame_rate_calc),(30,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,0),2,cv2.LINE_AA)
