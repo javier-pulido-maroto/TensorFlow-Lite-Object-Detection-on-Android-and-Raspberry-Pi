@@ -239,7 +239,7 @@ while True:
 
     for idx, box in centroid_dict.items():  # dict (1(key):red(value), 2 blue)  idx - key  box - value
         if idx in red_zone_list:  # if id is in red zone list
-            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (255, 0, 0), 2)  # Create Red bounding boxes  #starting point, ending point size of 2
+            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (0, 0, 255), 2)  # Create Red bounding boxes  #starting point, ending point size of 2
             # Draw label
             label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
             labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)  # Get font size
