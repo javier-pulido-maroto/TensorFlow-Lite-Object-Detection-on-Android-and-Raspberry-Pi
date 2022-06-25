@@ -26,6 +26,17 @@ import time
 from threading import Thread
 import importlib.util
 
+from colorama import Style, Fore, init
+
+init(autoreset=True)
+
+#know width of a person IN CM
+KNOWN_WIDTH = 58.0
+#know distance to calibrate in CM
+KNOWN_DISTANCE = 200.0
+#Perceived focal Length estimated
+FOCAL_LENGTH = 1403.4483
+
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
 # Source - Adrian Rosebrock, PyImageSearch: https://www.pyimagesearch.com/2015/12/28/increasing-raspberry-pi-fps-with-python-and-opencv/
 class VideoStream:
@@ -166,6 +177,10 @@ def is_close(p1, p2):
     dst = math.sqrt(p1 ** 2 + p2 ** 2)
     return dst
 
+def distance_to_camera(physicalWidth, focalLength, pixelWidth):
+    return (physicalWidth * focalLength) / pixelWidth
+
+
 #for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=True):
 while True:
 
@@ -189,6 +204,13 @@ while True:
     interpreter.set_tensor(input_details[0]['index'],input_data)
     interpreter.invoke()
 
+    # for n, el in enumerate(output_details):
+    #     print(f"\n{Fore.BLUE}Elemento {n}:")
+    #     for k, v in el.items():
+    #         print(f"\t{Fore.GREEN}{k}", end="")
+    #         print(f" --> {Fore.CYAN}{v}")
+
+
     # Retrieve detection results
     boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding box coordinates of detected objects
     classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class index of detected objects
@@ -197,11 +219,13 @@ while True:
 
     centroid_dict = dict()  # Function creates a dictionary and calls it centroid_dict
     objectId = 0  # We initialize a variable called ObjectId and set it to 0
+    red_zone_list = []  # List containing which Object id is in under threshold distance condition.
+    blue_zone_list = []
+    yellow_zone_list = []
 
     # Loop over all detections and draw detection box if confidence is above minimum threshold
     for i in range(len(scores)):
-        if ((scores[i] > min_conf_threshold) and (scores[i] <= 1.0)):
-
+        if scores[i] > min_conf_threshold and scores[i] <= 1.0:
             # Get bounding box coordinates and draw box
             # Interpreter can return coordinates that are outside of image dimensions, need to force them to be within image using max() and min()
             ymin = int(max(1,(boxes[i][0] * imH)))
@@ -209,7 +233,6 @@ while True:
             ymax = int(min(imH,(boxes[i][2] * imH)))
             xmax = int(min(imW,(boxes[i][3] * imW)))
             object_name = labels[int(classes[i])]  # Look up object name from "labels" array using class index
-            print("object name", object_name)
             if object_name == 'person':
                 # calculate middle points x,y
                 x = int(round((xmin + xmax) / 2))
@@ -217,28 +240,57 @@ while True:
 
                 centroid_dict[objectId] = (x, y, xmin, ymin, xmax,
                                            ymax)  # Create dictionary of tuple with 'objectId' as the index center points and bbox
+                #print(f"x: {centroid_dict[objectId][0]}  y: {centroid_dict[objectId][1]}")
                 objectId += 1  # Increment the index for each detection
-                #print('centroid', centroid_dict)
-                print("centroid", centroid_dict[i])
-                print("Score", scores[i])
+                print(f"Dictionary: {centroid_dict}")
 
-    red_zone_list = []  # List containing which Object id is in under threshold distance condition.
-    red_line_list = []
+    for idx, box in centroid_dict.items():
+        pixel_width = box[4] - box[2]
+        dist_to_cam_id = distance_to_camera(KNOWN_WIDTH, FOCAL_LENGTH, pixel_width)
+        print("Distance to camera:", dist_to_cam_id, " cm")
+        if dist_to_cam_id <= 150:
+            blue_zone_list.append(idx)
+            print(f"{Fore.BLUE}PERSON {idx} HAS BEEN ADDED TO BLUE ZONE LIST")
+
     for (id1, p1), (id2, p2) in combinations(centroid_dict.items(), 2):  # Get all the combinations of close detections, #List of multiple items - id1 1, points 2, 1,3
         dx, dy = p1[0] - p2[0], p1[1] - p2[1]  # Check the difference between centroid x: 0, y :1
         distance = is_close(dx, dy)
-        print('distance', distance)  # Calculates the Euclidean distance
-        if distance < 500:  # Set our social distance threshold - If they meet this condition then..
+        print('distance:', distance)  # Calculates the Euclidean distance
+
+        distancia_peligro = 1280 * 200 / 145
+
+        id1_pixel_width = p1[4] - p1[2]
+        id2_pixel_width = p2[4] - p2[2]
+        # focalLength_id1 = (id1_pixel_width * KNOWN_DISTANCE) / KNOWN_WIDTH
+        # focalLength_id2 = (id2_pixel_width * KNOWN_DISTANCE) / KNOWN_WIDTH
+        # print("id1 pixel width:", id1_pixel_width, "id2 pixel width:", id2_pixel_width)
+        # print("focalLenght_id1:", focalLength_id1, "focalLenght_id2:", focalLength_id2)
+        #
+        dist_to_cam_id1 = distance_to_camera(KNOWN_WIDTH, 1403.4483, id1_pixel_width)
+        print("Distance ID1 to camera:", dist_to_cam_id1, " cm")
+        dist_to_cam_id2 = distance_to_camera(KNOWN_WIDTH, 1403.4483, id2_pixel_width)
+        print("Distance ID2 to camera:", dist_to_cam_id2, " cm")
+
+        if distance < distancia_peligro:  # Set our social distance threshold - If they meet this condition then..
             print('DISTANCE TOO CLOSE')
             if id1 not in red_zone_list:
                 red_zone_list.append(id1)  # Add Id to a list
-                red_line_list.append(p1[0:2])  # Add points to the list
+                print(f"{Fore.RED}PERSON {id1} HAS BEEN ADDED TO RED ZONE LIST")
+                #red_line_list.append(p1[0:2])  # Add points to the list
+                if dist_to_cam_id1 <=150:
+                    yellow_zone_list.append(id1)  # Add Id to a list
+                    print(f"{Fore.YELLOW}PERSON {id1} HAS BEEN ADDED TO YELLOW ZONE LIST")
             if id2 not in red_zone_list:
                 red_zone_list.append(id2)  # Same for the second id
-                red_line_list.append(p2[0:2])
+                print(f"{Fore.RED}PERSON {id2} HAS BEEN ADDED TO RED ZONE LIST")
+                #red_line_list.append(p2[0:2])
+                if dist_to_cam_id2 <=150:
+                    yellow_zone_list.append(id2)
+                    print(f"{Fore.YELLOW}PERSON {id2} HAS BEEN ADDED TO YELLOW ZONE LIST")
 
     for idx, box in centroid_dict.items():  # dict (1(key):red(value), 2 blue)  idx - key  box - value
         if idx in red_zone_list:  # if id is in red zone list
+            print(f"{Fore.RED}PERSON {idx} IS TOO CLOSE TO ANOTHER PERSON")
             cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (0, 0, 255), 2)  # Create Red bounding boxes  #starting point, ending point size of 2
             # Draw label
             label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
@@ -249,7 +301,32 @@ while True:
                           cv2.FILLED)  # Draw white box to put label text in
             cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
                         2)  # Draw label text
+        if idx in blue_zone_list:  # if id is in blue zone list
+            print(f"{Fore.BLUE}PERSON {idx} IS TOO CLOSE TO THE CAMERA")
+            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (255, 0, 0), 2)  # Create Blue bounding boxes  #starting point, ending point size of 2
+            # Draw label
+            label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
+            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)  # Get font size
+            label_ymin = max(box[3], labelSize[1] + 10)  # Make sure not to draw label too close to top of window
+            cv2.rectangle(frame, (box[2], label_ymin - labelSize[1] - 10),
+                          (box[2] + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255),
+                          cv2.FILLED)  # Draw white box to put label text in
+            cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+                        2)  # Draw label text
+        if idx in yellow_zone_list:  # if id is in blue zone list
+            print(f"{Fore.YELLOW}PERSON {idx} IS TOO CLOSE TO THE CAMERA AND ANOTHER PERSON")
+            cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (0, 255, 255), 2)  # Create Blue bounding boxes  #starting point, ending point size of 2
+            # Draw label
+            label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
+            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)  # Get font size
+            label_ymin = max(box[3], labelSize[1] + 10)  # Make sure not to draw label too close to top of window
+            cv2.rectangle(frame, (box[2], label_ymin - labelSize[1] - 10),
+                          (box[2] + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255),
+                          cv2.FILLED)  # Draw white box to put label text in
+            cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+                        2)  # Draw label text
         else:
+            print(f"{Fore.GREEN}PERSON {idx} IS OK")
             cv2.rectangle(frame, (box[2], box[3]), (box[4], box[5]), (0, 255, 0), 2)  # Create Green bounding boxes
             # Draw label
             label = '%s: %d%%' % (object_name, int(scores[idx] * 100))  # Example: 'person: 72%'
@@ -260,6 +337,13 @@ while True:
                           cv2.FILLED)  # Draw white box to put label text in
             cv2.putText(frame, label, (box[2], label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
                         2)  # Draw label text
+        # for check in range(0, len(red_zone_list)-1):
+        #     start_point = red_line_list[check]
+        #     end_point = red_line_list[check + 1]
+        #     check_line_x = abs(end_point[0]-start_point[0])
+        #     check_line_y = abs(end_point[1] - start_point[1])
+        #     if check_line_x < and check_line_y <:
+        #         cv2.line(frame, start_point, end_point, (255, 0, 0), 2)
 
     # Draw framerate in corner of frame
     cv2.putText(frame,'FPS: {0:.2f}'.format(frame_rate_calc),(30,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,0),2,cv2.LINE_AA)
